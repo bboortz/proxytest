@@ -5,6 +5,7 @@ import cherrypy
 from urllib2 import urlopen
 from contextlib import closing
 import json
+import hashlib, binascii
 
 
 
@@ -16,6 +17,7 @@ class GeoLocation(object):
 
 	def get_location(self, ip):	
 		res = "";
+
 		res = """<h2>Geo Location </h2>""" 
 		try:
 			with closing(urlopen(self.url)) as response:
@@ -27,10 +29,20 @@ class GeoLocation(object):
 					value = location.get(key, None)
 					res += "<li>%s = %s</li>" % (key, value)
 				res += "</ul>"
+				res += self.get_location_img( location.get('latitude', None), location.get('longitude', None) )
 			
-		except:
+		except Exception as e:
+			print e
 			res += "<b>Cannot determine location.</b>"
 
+		res += "<br />"
+
+		return res
+
+	def get_location_img(self, latitude, longitude):
+		res = "";
+
+		res += "<div><img src='https://maps.googleapis.com/maps/api/staticmap?center=%s,%s&zoom=13&size=300x300&sensor=false' alt='Geolocation'></div>" % (latitude, longitude)
 		res += "<br />"
 
 		return res
@@ -60,6 +72,7 @@ class Root(object):
 		res += self.geolocation.get_location(self.client_ip)
 		res += self.process_javascript_geolocation(cherrypy.request)
 		res += self.process_javascript(cherrypy.request)
+		res += self.process_fingerprint(cherrypy.request)
 
 		# set a cookie
 		self.set_cookies(cherrypy.response.cookie)
@@ -194,6 +207,32 @@ class Root(object):
 		
 		return res
 
+
+	def process_fingerprint(self, request):
+		res = ""
+
+		salt = 'password1234'
+		list = []
+		list.append( request.headers.get('Accept', "") )
+		list.append( request.headers.get('Accept-Language', "") )
+		list.append( request.headers.get('Accept-Encoding', "") )
+		list.append( request.headers.get('DNT', "") )
+		list.append( request.headers.get('Connection', "") )
+		list.append( request.headers.get('Upgrade-Insecure-Requests', "") )
+		str = '-'.join(list)
+
+		dk = hashlib.pbkdf2_hmac('sha256', str, salt, 100000)
+		header_fingerprint = binascii.hexlify(dk)
+
+		res = """<h2>Fingerprint:</h2>"""
+		res += "<ul>"
+		res += "<li>Fingerprint (Header): %s </li>" % header_fingerprint
+		res += "</ul>"
+		res += "<br />"
+		
+		return res
+
+
 	
 	def stream_javascript(self, request):
 		res = ""
@@ -320,13 +359,13 @@ if __name__ == '__main__':
 		'request.error_response': show_blank_page_on_error,
 		'error_page.default': error_page_handler,
 		'tools.secureheaders.on': True,
-		'tools.httponly_cookies.on': True,
+#		'tools.httponly_cookies.on': True,
 		'tools.sessions.on': True,
 		'tools.sessions.httponly': True,
 	})
 
 	cherrypy.tools.secureheaders = cherrypy.Tool('before_finalize', secureheaders, priority=60)
-	cherrypy.tools.httponly_cookies = cherrypy.Tool('on_end_resource', httponly)
+#	cherrypy.tools.httponly_cookies = cherrypy.Tool('on_end_resource', httponly)
 	cherrypy.tree.mount(Root(), '/', config = { 
 		'/': {
 		},
