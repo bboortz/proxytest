@@ -37,7 +37,6 @@ class GeoLocation(object):
 
 
 
-
 class Root(object):
 
 	favicon_ico = None
@@ -50,32 +49,17 @@ class Root(object):
 	def index(self, *args, **kwargs):
 		res = ""
 
-		# only get requests
-		if cherrypy.request.method != 'GET':
-			raise cherrypy.HTTPError(404)
-
-		# block requests with expect
-		expect = cherrypy.request.headers.get('Expect', None)
-		if expect != None:
-			raise cherrypy.HTTPError(417)
-
-		# block javascript in requests
-		query_string = cherrypy.request.query_string
-		if query_string != None and query_string != "":
-			print query_string
-			if '<script>' in query_string or \
-				'</script>' in query_string or \
-				'%3Cscript%3E' in query_string or \
-				'%3C/script%3E' in query_string:
-				raise cherrypy.HTTPError(403)
-
+		self.protect_resource(cherrypy.request);
 
 		# process the request
+		res += self.stream_javascript(cherrypy.request)
 		res += self.process_request(cherrypy.request)
 		res += self.process_cookies(cherrypy.request.cookie)
 		res += self.process_header(cherrypy.request.headers)
 		res += self.process_proxy_header(cherrypy.request.headers)
 		res += self.geolocation.get_location(self.client_ip)
+		res += self.process_javascript_geolocation(cherrypy.request)
+		res += self.process_javascript(cherrypy.request)
 
 		# set a cookie
 		self.set_cookies(cherrypy.response.cookie)
@@ -158,12 +142,12 @@ class Root(object):
 	def process_proxy_header(self, headers):
 		res = ""
 
-		remote_addr = cherrypy.request.headers.get('Remote-Addr', None)
-		forwarded = cherrypy.request.headers.get('FORWARDED', None)
-		http_forwarded = cherrypy.request.headers.get('HTTP_FORWARDED', None)
-		http_x_forwarded_for = cherrypy.request.headers.get('HTTP_X_FORWARDED_FOR', None)
-		via = cherrypy.request.headers.get('via', None)
-		host = cherrypy.request.headers.get('Host', None)
+		remote_addr = headers.get('Remote-Addr', None)
+		forwarded = headers.get('FORWARDED', None)
+		http_forwarded = headers.get('HTTP_FORWARDED', None)
+		http_x_forwarded_for = headers.get('HTTP_X_FORWARDED_FOR', None)
+		via = headers.get('via', None)
+		host = headers.get('Host', None)
 
 		res = """<h2>Proxy Header List:</h2>"""
 		res += "<ul>"
@@ -177,6 +161,126 @@ class Root(object):
 		res += "<br />"
 		
 		return res
+
+	def process_javascript_geolocation(self, request):
+		res = ""
+
+		res = """<h2>Geolocation with Javascript:</h2>"""
+		res += "<ul>"
+		res += "<li><div id='geolocation'></div> </li>"
+		res += "</ul>"
+		res += "<div id='geolocation_img'></div>"
+		res += "<br />"
+		
+		return res
+
+
+
+	def process_javascript(self, request):
+		res = ""
+
+		user_agent_header = request.headers.get('User-Agent', None)
+		language_header = request.headers.get('Accept-Language', None)
+
+		res = """<h2>Javascript Checks:</h2>"""
+		res += "<ul>"
+		res += "<li>User-Agent (Header): %s </li>" % user_agent_header
+		res += "<li><div id='useragent'></div> </li>"
+		res += "<li>Language (Header): %s </li>" % language_header
+		res += "<li><div id='language'></div> </li>"
+		res += "<li><div id='platform'></div> </li>"
+		res += "</ul>"
+		res += "<br />"
+		
+		return res
+
+	
+	def stream_javascript(self, request):
+		res = ""
+
+		# some javascript
+		res += """
+
+<html>
+<head>
+<script type='text/javascript'>
+function setDiv(id, text) {
+	document.getElementById(id).innerText = text;
+	document.getElementById(id).textContent = text;
+
+}
+
+function geoFindCoord(latitude, longitude, elementId) {
+	var img = new Image();
+	img.src = 'https://maps.googleapis.com/maps/api/staticmap?center=' + latitude + ',' + longitude + '&zoom=13&size=300x300&sensor=false';
+
+	elementId.appendChild(img);
+}
+
+function geoFindMe() {
+	var output = document.getElementById('geolocation');
+	var output_img = document.getElementById('geolocation_img');
+
+	if (!navigator.geolocation){
+		output.innerHTML = '<p>Geolocation is not supported by your browser</p>';
+		return;
+	}
+
+	function success(position) {
+		var latitude  = position.coords.latitude;
+		var longitude = position.coords.longitude;
+
+		output.innerHTML = '<p>Latitude is ' + latitude + ' <br>Longitude is ' + longitude + '</p>';
+		geoFindCoord(latitude, longitude, output_img)
+	};
+
+	function error() {
+		output.innerHTML = 'Unable to retrieve your location';
+	};
+
+	output.innerHTML = '<p>Locating..</p>';
+	navigator.geolocation.getCurrentPosition(success, error);
+}
+
+function jsTests() {
+	var useragent = "User-Agent (JavaScript): " + navigator.userAgent;
+	var language = "Language (JavaScript): " + navigator.languages;
+	var platform = "Platform (JavaScript): " + navigator.platform;
+
+	setDiv('useragent', useragent);
+	setDiv('language', language);
+	setDiv('platform', platform);
+
+	geoFindMe();
+}
+</script>
+</head>
+
+<body onload=\"jsTests();\" >"""
+		
+		return res
+
+
+	def protect_resource(self, request):
+		# only get requests
+		if request.method != 'GET':
+			raise cherrypy.HTTPError(404)
+
+		# block requests with expect
+		expect = request.headers.get('Expect', None)
+		if expect != None:
+			raise cherrypy.HTTPError(417)
+
+		# block javascript in requests
+		query_string = request.query_string
+		if query_string != None and query_string != "":
+			print query_string
+			if '<script>' in query_string or \
+				'</script>' in query_string or \
+				'%3Cscript%3E' in query_string or \
+				'%3C/script%3E' in query_string:
+				raise cherrypy.HTTPError(403)
+
 
 
 def show_blank_page_on_error():
@@ -197,7 +301,7 @@ def secureheaders():
 	headers = cherrypy.response.headers
 	headers['X-Frame-Options'] = 'DENY'
 	headers['X-XSS-Protection'] = '1; mode=block'
-	headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'"
+	headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; img-src maps.googleapis.com"
 	headers['Server'] = "ProxyTest"
 
 
